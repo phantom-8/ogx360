@@ -9,7 +9,7 @@
 #define MAIN_H_
 #include <inttypes.h>
 
-#define USB_HOST_RESET_PIN 9
+#define USB_HOST_RESET_PIN 8
 #define ARDUINO_LED_PIN 17
 #define PLAYER_ID1_PIN 19
 #define PLAYER_ID2_PIN 20

@@ -21,6 +21,7 @@
 #include "Usb.h"
 #include "usbhid.h"
 #include "xboxEnums.h"
+#include "x360Base.h"
 
 /* Data Xbox 360 taken from descriptors */
 #define EP_MAXPKTSIZE 32 // max size for data via USB
@@ -29,6 +30,7 @@
 #define XBOX_CONTROL_PIPE 0
 #define XBOX_INPUT_PIPE 1
 #define XBOX_OUTPUT_PIPE 2
+#define XBOX_INPUT_PIPE_CHATPAD 3
 
 // PID and VID of the different devices
 #define MICROSOFT_VID 0x045E    // Microsoft Corporation
@@ -62,7 +64,7 @@
 
 #define XBOX_REPORT_BUFFER_SIZE 14 // Size of the input report buffer
 
-//#define XBOX_MAX_ENDPOINTS   3
+#define XBOXUSB_MAX_ENDPOINTS   4
 
 /** This class implements support for a Xbox wired controller via USB. */
 class XBOXUSB : public USBDeviceConfig
@@ -191,6 +193,11 @@ public:
      */
     void setRumbleOn(uint8_t lValue, uint8_t rValue);
     /**
+     * Turn rumble motor on or off.
+     * @param motorOn    true to enable motor rumble, false to turn off
+     */
+    void setRumbleMotorOn(bool motorOn);
+    /**
      * Set LED value. Without using the ::LEDEnum or ::LEDModeEnum.
      * @param value      See:
      * setLedOff(), setLedOn(LEDEnum l),
@@ -208,16 +215,6 @@ public:
      * @param l      ::OFF, ::LED1, ::LED2, ::LED3 and ::LED4 is supported by the Xbox controller.
      */
     void setLedOn(LEDEnum l);
-    /**
-     * Turn on a LED by using ::LEDEnum.
-     * @param l      ::ALL, ::LED1, ::LED2, ::LED3 and ::LED4 is supported by the Xbox controller.
-     */
-    void setLedBlink(LEDEnum l);
-    /**
-     * Used to set special LED modes supported by the Xbox controller.
-     * @param lm     See ::LEDModeEnum.
-     */
-    void setLedMode(LEDModeEnum lm);
 
     /**
      * Used to call your own function when the controller is successfully initialized.
@@ -227,6 +224,15 @@ public:
     {
         pFuncOnInit = funcOnInit;
     };
+
+    void enableChatPad();
+    void chatPadKeepAlive1();
+    void chatPadKeepAlive2();
+    uint8_t getChatPadPress(ChatPadButton b);
+    uint8_t getChatPadClick(ChatPadButton b);
+    void chatPadQueueLed(uint8_t led);
+    //uint8_t chatPadInitNeeded;
+
     /**@}*/
 
     /** True if a Xbox 360 controller is connected. */
@@ -241,7 +247,7 @@ protected:
     /** Device address. */
     uint8_t bAddress;
     /** Endpoint info structure. */
-    EpInfo epInfo[3];
+    EpInfo epInfo[XBOXUSB_MAX_ENDPOINTS];
 
 private:
     /**
@@ -253,24 +259,27 @@ private:
     void (*pFuncOnInit)(void); // Pointer to function called in onInit()
 
     bool bPollEnable;
+    bool rumbleMotorOn;
 
-    /* Variables to store the buttons */
-    uint32_t ButtonState;
-    uint32_t OldButtonState;
-    uint16_t ButtonClickState;
-    int16_t hatValue[4];
+    x360ButtonType button;
+    x360ChatPadType chatPad;
+
     uint16_t controllerStatus;
 
-    bool L2Clicked; // These buttons are analog, so we use we use these bools to check if they where clicked or not
-    bool R2Clicked;
-
-    uint8_t readBuf[EP_MAXPKTSIZE]; // General purpose buffer for input data
-    uint8_t writeBuf[8];            // General purpose buffer for output data
+    // Moved to x360Base.cpp as global variables.  Although not very clean, it save some precious memory
+    // Also, no need to have a copy for each object instance
+    //uint8_t readBuf[EP_MAXPKTSIZE]; // General purpose buffer for input data
+    //uint8_t writeBuf[8];            // General purpose buffer for output data
 
     void readReport();  // read incoming data
-    void printReport(); // print incoming date - Uncomment for debugging
+    void readChatPadReport(); // read Chatpad incoming data
+    void printReport(uint8_t endpoint, uint8_t nBytes); // print incoming date - Uncomment for debugging
 
     /* Private commands */
     void XboxCommand(uint8_t *data, uint16_t nbytes);
+    void sendCtrlEp(uint8_t val1, uint8_t val2, uint16_t val3, uint16_t val4);
+    void sendCtrlEp(uint8_t val1, uint8_t val2, uint16_t val3, uint16_t val4, uint16_t total, uint16_t nbytes, uint8_t *data);
+    void sendChatPadCommand(uint8_t cmd);
+    void chatPadProcessLed();
 };
 #endif

@@ -22,6 +22,8 @@ In settings.h you can configure the following options:
 4. Enable or disable Xbox One Wired Support (Disabled by default)
 */
 
+//#define DISABLE_I2C	// Temperary disable some I2C communications to free up additional memory for logging/debugging
+
 #include "settings.h"
 #include "xiddevice.h"
 #include "Wire.h"
@@ -60,10 +62,15 @@ USB UsbHost;
 USBHub Hub(&UsbHost);
 XBOXRECV Xbox360Wireless(&UsbHost);
 uint8_t getButtonPress(ButtonEnum b, uint8_t controller);
+uint8_t getButtonClick(ButtonEnum b, uint8_t controller);
 int16_t getAnalogHat(AnalogHatEnum a, uint8_t controller);
+uint8_t getChatPadPress(ChatPadButton b, uint8_t controller);
+uint8_t getChatPadClick(ChatPadButton b, uint8_t controller);
+void chatPadQueueLed(uint8_t led, uint8_t controller);
 void setRumbleOn(uint8_t lValue, uint8_t rValue, uint8_t controller);
 void setLedOn(LEDEnum led, uint8_t controller);
 bool controllerConnected(uint8_t controller);
+bool rumbleMotorOn = false;	// Allow disabling Xbox Wired Controller rumble to avoid insufficient power causing brownout
 #ifdef SUPPORTWIREDXBOXONE
 XBOXONE XboxOneWired1(&UsbHost);
 XBOXONE XboxOneWired2(&UsbHost);
@@ -142,7 +149,7 @@ int main(void)
     GlobalInterruptEnable();
 
     //Initialise the Serial Port
-    //Serial1.begin(500000);
+    //Serial1.begin(230400);
 
     //Determine what player this board is. Used for the slave devices mainly.
     //There is 2 ID pins on the PCB which are read in.
@@ -175,6 +182,7 @@ int main(void)
 
     //Ping slave devices if present
     //This will cause them to blink
+#ifndef DISABLE_I2C
     for (uint8_t i = 1; i < MAX_CONTROLLERS; i++)
     {
         static const char ping[] = {(char)0xAA};
@@ -183,16 +191,8 @@ int main(void)
         Wire.endTransmission(true);
         delay(100);
     }
+#endif //DISABLE_I2C
 
-    //Init all chatpad led FIFO queues 0xFF means empty spot.
-    for (uint8_t i = 0; i < 4; i++)
-    {
-        Xbox360Wireless.chatPadLedQueue[i][0] = 0xFF;
-        Xbox360Wireless.chatPadLedQueue[i][1] = 0xFF;
-        Xbox360Wireless.chatPadLedQueue[i][2] = 0xFF;
-        Xbox360Wireless.chatPadLedQueue[i][3] = 0xFF;
-        Xbox360Wireless.chatPadInitNeeded[i] = 1;
-    }
 #endif
 
 #ifdef SUPPORTBATTALION
@@ -266,7 +266,7 @@ int main(void)
                 }
 #ifdef SUPPORTBATTALION
                 //Button Mapping for Steel Battalion Controller - only applicable for player 1 and Xbox 360 Wireless Controllers
-                else if (ConnectedXID == STEELBATTALION && Xbox360Wireless.Xbox360Connected[i] && i == 0)
+                else if (ConnectedXID == STEELBATTALION && (Xbox360Wireless.Xbox360Connected[i] || Xbox360Wired[i]->Xbox360Connected) && i == 0)
                 {
                     //R,N,1,2,3,4,5
                     static const uint8_t gearStates[7] = {7, 8, 9, 10, 11, 12, 13}; 
@@ -282,12 +282,12 @@ int main(void)
                     //L3/R3 - L and R Stick Press
                     //Note the W0,W1 or W2 in the SBC_GAMEPAD button defines the offset in dButtons[X].
                     //i.e. SBC_GAMEPAD_W1_COMM3 should use dButtons[1].
-                    if (Xbox360Wireless.getButtonPress(START, i))
+                    if (getButtonPress(START, i))
                         XboxOGSteelBattalion.dButtons[0] |= SBC_GAMEPAD_W0_START;
-                    if (Xbox360Wireless.getButtonPress(L1, i))
+                    if (getButtonPress(L1, i))
                         XboxOGSteelBattalion.dButtons[0] |= SBC_GAMEPAD_W0_RIGHTJOYFIRE;
                     static uint32_t L3HoldTimer = 0; //Timer for holding the Left stick in
-                    if (Xbox360Wireless.getButtonPress(L3, i))
+                    if (getButtonPress(L3, i))
                     {
                         XboxOGSteelBattalion.dButtons[2] |= SBC_GAMEPAD_W2_LEFTJOYSIGHTCHANGE;
                         if (L3HoldTimer == 0 && (virtualMouseY != 32768 || virtualMouseX != 32768))
@@ -306,13 +306,13 @@ int main(void)
                         L3HoldTimer = 0;
                     }
 
-                    if (Xbox360Wireless.getButtonPress(R3, i) || Xbox360Wireless.getButtonPress(B, i))
+                    if (getButtonPress(R3, i) || getButtonPress(B, i))
                         XboxOGSteelBattalion.dButtons[0] |= SBC_GAMEPAD_W0_RIGHTJOYLOCKON;
 
-                    if (Xbox360Wireless.getButtonPress(R1, i) || Xbox360Wireless.getButtonPress(A, i))
+                    if (getButtonPress(R1, i) || getButtonPress(A, i))
                         XboxOGSteelBattalion.dButtons[0] |= SBC_GAMEPAD_W0_RIGHTJOYMAINWEAPON;
 
-                    if (Xbox360Wireless.getButtonPress(XBOX, i) || Xbox360Wireless.getChatPadPress(CHATPAD_0, i))
+                    if (getButtonPress(XBOX, i) || getChatPadPress(CHATPAD_0, i))
                         XboxOGSteelBattalion.dButtons[0] |= SBC_GAMEPAD_W0_EJECT;
 
                     //What the X button does depends on what is needed by your VT.
@@ -329,7 +329,7 @@ int main(void)
                         XboxOGDuke[i].left_actuator = (XboxOGSteelBattalionFeedback.Chaff_Extinguisher << 4) & 0xF0;
                         XboxOGDuke[i].right_actuator = XboxOGDuke[i].left_actuator;
                         XboxOGDuke[i].rumbleUpdate = 1;
-                        if (Xbox360Wireless.getButtonPress(X, i))
+                        if (getButtonPress(X, i))
                             XboxOGSteelBattalion.dButtons[1] |= SBC_GAMEPAD_W1_EXTINGUISHER;
                     }
                     if ((XboxOGSteelBattalionFeedback.Comm1_MagazineChange & 0x0F) != 0)
@@ -337,12 +337,12 @@ int main(void)
                         XboxOGDuke[i].left_actuator = (XboxOGSteelBattalionFeedback.Comm1_MagazineChange << 4) & 0xF0;
                         XboxOGDuke[i].right_actuator = XboxOGDuke[i].left_actuator;
                         XboxOGDuke[i].rumbleUpdate = 1;
-                        if (Xbox360Wireless.getButtonPress(X, i))
+                        if (getButtonPress(X, i))
                             XboxOGSteelBattalion.dButtons[1] |= SBC_GAMEPAD_W1_WEAPONCONMAGAZINE;
                     }
                     if ((XboxOGSteelBattalionFeedback.Washing_LineColorChange & 0xF0) != 0)
                     {
-                        if (Xbox360Wireless.getButtonPress(X, i))
+                        if (getButtonPress(X, i))
                             XboxOGSteelBattalion.dButtons[1] |= SBC_GAMEPAD_W1_WASHING;
                     }
                     if ((XboxOGSteelBattalionFeedback.CockpitHatch_EmergencyEject & 0x0F) != 0)
@@ -353,25 +353,25 @@ int main(void)
                     }
 
                     //Hold the messenger button for COMMS and Adjust TunerDial
-                    if (Xbox360Wireless.getChatPadPress(CHATPAD_MESSENGER, i) || Xbox360Wireless.getButtonPress(BACK, i))
+                    if (getChatPadPress(CHATPAD_MESSENGER, i) || getButtonPress(BACK, i))
                     {
-                        if (Xbox360Wireless.getChatPadPress(CHATPAD_1, i))
+                        if (getChatPadPress(CHATPAD_1, i))
                             XboxOGSteelBattalion.dButtons[1] |= SBC_GAMEPAD_W1_COMM1;
-                        if (Xbox360Wireless.getChatPadPress(CHATPAD_2, i))
+                        if (getChatPadPress(CHATPAD_2, i))
                             XboxOGSteelBattalion.dButtons[1] |= SBC_GAMEPAD_W1_COMM2;
-                        if (Xbox360Wireless.getChatPadPress(CHATPAD_3, i))
+                        if (getChatPadPress(CHATPAD_3, i))
                             XboxOGSteelBattalion.dButtons[1] |= SBC_GAMEPAD_W1_COMM3;
-                        if (Xbox360Wireless.getChatPadPress(CHATPAD_4, i))
+                        if (getChatPadPress(CHATPAD_4, i))
                             XboxOGSteelBattalion.dButtons[1] |= SBC_GAMEPAD_W1_COMM4;
-                        if (Xbox360Wireless.getChatPadPress(CHATPAD_5, i))
+                        if (getChatPadPress(CHATPAD_5, i))
                             XboxOGSteelBattalion.dButtons[2] |= SBC_GAMEPAD_W2_COMM5;
 
                         //Change tuner dial position by Holding the messenger then pressing D-pad directions.
                         //Tuner dial = 0-15, corresponding to the 9o'clock position going clockwise.
-                        if (Xbox360Wireless.getButtonClick(UP, i) || Xbox360Wireless.getButtonClick(RIGHT, i))
+                        if (getButtonClick(UP, i) || getButtonClick(RIGHT, i))
                             XboxOGSteelBattalion.tunerDial += 2;
 
-                        if (Xbox360Wireless.getButtonClick(DOWN, i) || Xbox360Wireless.getButtonClick(LEFT, i))
+                        if (getButtonClick(DOWN, i) || getButtonClick(LEFT, i))
                             XboxOGSteelBattalion.tunerDial -= 2;
 
                         if (XboxOGSteelBattalion.tunerDial > 15)
@@ -381,34 +381,34 @@ int main(void)
 
                         //The default configuration
                     }
-                    else if (!Xbox360Wireless.getChatPadPress(CHATPAD_ORANGE, i))
+                    else if (!getChatPadPress(CHATPAD_ORANGE, i))
                     {
-                        if (Xbox360Wireless.getChatPadPress(CHATPAD_1, i))
+                        if (getChatPadPress(CHATPAD_1, i))
                             XboxOGSteelBattalion.dButtons[1] |= SBC_GAMEPAD_W1_FUNCTIONF1;
-                        if (Xbox360Wireless.getChatPadPress(CHATPAD_2, i))
+                        if (getChatPadPress(CHATPAD_2, i))
                             XboxOGSteelBattalion.dButtons[1] |= SBC_GAMEPAD_W1_FUNCTIONTANKDETACH;
-                        if (Xbox360Wireless.getChatPadPress(CHATPAD_3, i))
+                        if (getChatPadPress(CHATPAD_3, i))
                             XboxOGSteelBattalion.dButtons[0] |= SBC_GAMEPAD_W0_FUNCTIONFSS;
-                        if (Xbox360Wireless.getChatPadPress(CHATPAD_4, i))
+                        if (getChatPadPress(CHATPAD_4, i))
                             XboxOGSteelBattalion.dButtons[1] |= SBC_GAMEPAD_W1_FUNCTIONF2;
-                        if (Xbox360Wireless.getChatPadPress(CHATPAD_5, i))
+                        if (getChatPadPress(CHATPAD_5, i))
                             XboxOGSteelBattalion.dButtons[1] |= SBC_GAMEPAD_W1_FUNCTIONOVERRIDE;
-                        if (Xbox360Wireless.getChatPadPress(CHATPAD_6, i))
+                        if (getChatPadPress(CHATPAD_6, i))
                             XboxOGSteelBattalion.dButtons[0] |= SBC_GAMEPAD_W0_FUNCTIONMANIPULATOR;
-                        if (Xbox360Wireless.getChatPadPress(CHATPAD_7, i))
+                        if (getChatPadPress(CHATPAD_7, i))
                             XboxOGSteelBattalion.dButtons[1] |= SBC_GAMEPAD_W1_FUNCTIONF3;
-                        if (Xbox360Wireless.getChatPadPress(CHATPAD_8, i))
+                        if (getChatPadPress(CHATPAD_8, i))
                             XboxOGSteelBattalion.dButtons[1] |= SBC_GAMEPAD_W1_FUNCTIONNIGHTSCOPE;
-                        if (Xbox360Wireless.getChatPadPress(CHATPAD_9, i))
+                        if (getChatPadPress(CHATPAD_9, i))
                             XboxOGSteelBattalion.dButtons[0] |= SBC_GAMEPAD_W0_FUNCTIONLINECOLORCHANGE;
 
                         //Change gears by Pressing DUP or DDOWN. Limits are 0-6. //R,N,1,2,3,4,5
                         //To prevent accidentally changing gears whilst rotating, I check to make sure you aren't pressing LEFT or RIGHT.
-                        if (Xbox360Wireless.getButtonClick(UP, i) && !(Xbox360Wireless.getButtonPress(LEFT, i) || Xbox360Wireless.getButtonPress(RIGHT, i)))
+                        if (getButtonClick(UP, i) && !(getButtonPress(LEFT, i) || getButtonPress(RIGHT, i)))
                         {
                             currentGear++;
                         }
-                        else if (Xbox360Wireless.getButtonClick(DOWN, i) && !(Xbox360Wireless.getButtonPress(LEFT, i) || Xbox360Wireless.getButtonPress(RIGHT, i)))
+                        else if (getButtonClick(DOWN, i) && !(getButtonPress(LEFT, i) || getButtonPress(RIGHT, i)))
                         {
                             currentGear--;
                         }
@@ -419,21 +419,21 @@ int main(void)
                         XboxOGSteelBattalion.gearLever = gearStates[currentGear];
                     }
 
-                    if (Xbox360Wireless.getChatPadClick(CHATPAD_Q, i))
+                    if (getChatPadClick(CHATPAD_Q, i))
                         XboxOGSteelBattalion.dButtons[2] ^= SBC_GAMEPAD_W2_TOGGLEOXYGENSUPPLY; //Toggle Switch
-                    if (Xbox360Wireless.getChatPadClick(CHATPAD_A, i))
+                    if (getChatPadClick(CHATPAD_A, i))
                         XboxOGSteelBattalion.dButtons[2] ^= SBC_GAMEPAD_W2_TOGGLEFILTERCONTROL; //Toggle Switch
-                    if (Xbox360Wireless.getChatPadClick(CHATPAD_W, i))
+                    if (getChatPadClick(CHATPAD_W, i))
                         XboxOGSteelBattalion.dButtons[2] ^= SBC_GAMEPAD_W2_TOGGLEVTLOCATION; //Toggle Switch
-                    if (Xbox360Wireless.getChatPadClick(CHATPAD_S, i))
+                    if (getChatPadClick(CHATPAD_S, i))
                         XboxOGSteelBattalion.dButtons[2] ^= SBC_GAMEPAD_W2_TOGGLEBUFFREMATERIAL; //Toggle Switch
-                    if (Xbox360Wireless.getChatPadClick(CHATPAD_Z, i))
+                    if (getChatPadClick(CHATPAD_Z, i))
                         XboxOGSteelBattalion.dButtons[2] ^= SBC_GAMEPAD_W2_TOGGLEFUELFLOWRATE; //Toggle Switch
-                    if (Xbox360Wireless.getChatPadPress(CHATPAD_D, i))
+                    if (getChatPadPress(CHATPAD_D, i))
                         XboxOGSteelBattalion.dButtons[1] |= SBC_GAMEPAD_W1_WASHING;
-                    if (Xbox360Wireless.getChatPadPress(CHATPAD_F, i))
+                    if (getChatPadPress(CHATPAD_F, i))
                         XboxOGSteelBattalion.dButtons[1] |= SBC_GAMEPAD_W1_EXTINGUISHER;
-                    if (Xbox360Wireless.getChatPadClick(CHATPAD_SHIFT, i))
+                    if (getChatPadClick(CHATPAD_SHIFT, i))
                     {
                         if (XboxOGSteelBattalion.dButtons[2] &= 0xFFFC)
                         { //If any of the toggle switches are on SHIFT will turn everything off.
@@ -445,40 +445,40 @@ int main(void)
                         }
                     }
 
-                    if (Xbox360Wireless.getChatPadPress(CHATPAD_G, i) || Xbox360Wireless.getButtonPress(Y, i))
+                    if (getChatPadPress(CHATPAD_G, i) || getButtonPress(Y, i))
                         XboxOGSteelBattalion.dButtons[1] |= SBC_GAMEPAD_W1_CHAFF;
 
-                    if (Xbox360Wireless.getChatPadPress(CHATPAD_X, i) || Xbox360Wireless.getChatPadPress(CHATPAD_RIGHT, i))
+                    if (getChatPadPress(CHATPAD_X, i) || getChatPadPress(CHATPAD_RIGHT, i))
                         XboxOGSteelBattalion.dButtons[1] |= SBC_GAMEPAD_W1_WEAPONCONMAIN;
 
-                    if (Xbox360Wireless.getChatPadPress(CHATPAD_C, i) || Xbox360Wireless.getChatPadPress(CHATPAD_LEFT, i))
+                    if (getChatPadPress(CHATPAD_C, i) || getChatPadPress(CHATPAD_LEFT, i))
                         XboxOGSteelBattalion.dButtons[1] |= SBC_GAMEPAD_W1_WEAPONCONSUB;
 
-                    if (Xbox360Wireless.getChatPadPress(CHATPAD_V, i) || Xbox360Wireless.getChatPadPress(CHATPAD_SPACE, i))
+                    if (getChatPadPress(CHATPAD_V, i) || getChatPadPress(CHATPAD_SPACE, i))
                         XboxOGSteelBattalion.dButtons[1] |= SBC_GAMEPAD_W1_WEAPONCONMAGAZINE;
 
-                    if (Xbox360Wireless.getChatPadPress(CHATPAD_U, i))
+                    if (getChatPadPress(CHATPAD_U, i))
                         XboxOGSteelBattalion.dButtons[0] |= SBC_GAMEPAD_W0_MULTIMONOPENCLOSE;
-                    if (Xbox360Wireless.getChatPadPress(CHATPAD_J, i))
+                    if (getChatPadPress(CHATPAD_J, i))
                         XboxOGSteelBattalion.dButtons[0] |= SBC_GAMEPAD_W0_MULTIMONMODESELECT;
-                    if (Xbox360Wireless.getChatPadPress(CHATPAD_N, i))
+                    if (getChatPadPress(CHATPAD_N, i))
                         XboxOGSteelBattalion.dButtons[0] |= SBC_GAMEPAD_W0_MAINMONZOOMIN;
-                    if (Xbox360Wireless.getChatPadPress(CHATPAD_I, i))
+                    if (getChatPadPress(CHATPAD_I, i))
                         XboxOGSteelBattalion.dButtons[0] |= SBC_GAMEPAD_W0_MULTIMONMAPZOOMINOUT;
-                    if (Xbox360Wireless.getChatPadPress(CHATPAD_K, i))
+                    if (getChatPadPress(CHATPAD_K, i))
                         XboxOGSteelBattalion.dButtons[0] |= SBC_GAMEPAD_W0_MULTIMONSUBMONITOR;
-                    if (Xbox360Wireless.getChatPadPress(CHATPAD_M, i))
+                    if (getChatPadPress(CHATPAD_M, i))
                         XboxOGSteelBattalion.dButtons[0] |= SBC_GAMEPAD_W0_MAINMONZOOMOUT;
-                    if (Xbox360Wireless.getChatPadPress(CHATPAD_ENTER, i))
+                    if (getChatPadPress(CHATPAD_ENTER, i))
                         XboxOGSteelBattalion.dButtons[0] |= SBC_GAMEPAD_W0_START;
 
-                    if (Xbox360Wireless.getChatPadPress(CHATPAD_P, i))
+                    if (getChatPadPress(CHATPAD_P, i))
                     {
                         XboxOGSteelBattalion.dButtons[0] |= SBC_GAMEPAD_W0_COCKPITHATCH;
                         XboxOGSteelBattalion.dButtons[0] &= ~SBC_GAMEPAD_W0_IGNITION; //Cannot have these two buttons pressed at the same time, some bioses will trigger an IGR
                     }
 
-                    if (Xbox360Wireless.getChatPadPress(CHATPAD_COMMA, i))
+                    if (getChatPadPress(CHATPAD_COMMA, i))
                     {
                         XboxOGSteelBattalion.dButtons[0] |= SBC_GAMEPAD_W0_IGNITION;
                         XboxOGSteelBattalion.dButtons[0] &= ~SBC_GAMEPAD_W0_COCKPITHATCH; //Cannot have these two buttons pressed at the same time, some bioses will trigger an IGR
@@ -495,9 +495,9 @@ int main(void)
                     Endpoint_SelectEndpoint(ep); //set back to the old endpoint.
 
                     //Apply Pedals
-                    XboxOGSteelBattalion.leftPedal = (uint16_t)(Xbox360Wireless.getButtonPress(L2, i) << 8);  //0x00 to 0xFF00 SIDESTEP PEDAL
-                    XboxOGSteelBattalion.rightPedal = (uint16_t)(Xbox360Wireless.getButtonPress(R2, i) << 8); //0x00 to 0xFF00 ACCEL PEDAL
-                    if (Xbox360Wireless.getChatPadPress(CHATPAD_BACK, i))
+                    XboxOGSteelBattalion.leftPedal = (uint16_t)(getButtonPress(L2, i) << 8);  //0x00 to 0xFF00 SIDESTEP PEDAL
+                    XboxOGSteelBattalion.rightPedal = (uint16_t)(getButtonPress(R2, i) << 8); //0x00 to 0xFF00 ACCEL PEDAL
+                    if (getChatPadPress(CHATPAD_BACK, i))
                     {
                         XboxOGSteelBattalion.middlePedal = 0xFF00; //Brake Pedal
                     }
@@ -506,13 +506,13 @@ int main(void)
                         XboxOGSteelBattalion.middlePedal = 0x0000; //Brake Pedal
                     }
 
-                    if (!Xbox360Wireless.getChatPadPress(CHATPAD_MESSENGER, i) && !Xbox360Wireless.getButtonPress(BACK, i))
+                    if (!getChatPadPress(CHATPAD_MESSENGER, i) && !getButtonPress(BACK, i))
                     {
-                        if (Xbox360Wireless.getButtonPress(LEFT, i))
+                        if (getButtonPress(LEFT, i))
                         {
                             XboxOGSteelBattalion.rotationLever = -32767;
                         }
-                        else if (Xbox360Wireless.getButtonPress(RIGHT, i))
+                        else if (getButtonPress(RIGHT, i))
                         {
                             XboxOGSteelBattalion.rotationLever = +32767;
                         }
@@ -525,25 +525,25 @@ int main(void)
                     //Apply analog sticks
                     static int32_t sensitivity = 400;
                     EEPROM.get(0x00, sensitivity);
-                    if (Xbox360Wireless.getChatPadPress(CHATPAD_ORANGE, i))
+                    if (getChatPadPress(CHATPAD_ORANGE, i))
                     {
-                        if (Xbox360Wireless.getChatPadPress(CHATPAD_9, i))
+                        if (getChatPadPress(CHATPAD_9, i))
                             sensitivity = 200;
-                        if (Xbox360Wireless.getChatPadPress(CHATPAD_8, i))
+                        if (getChatPadPress(CHATPAD_8, i))
                             sensitivity = 250;
-                        if (Xbox360Wireless.getChatPadPress(CHATPAD_7, i))
+                        if (getChatPadPress(CHATPAD_7, i))
                             sensitivity = 300;
-                        if (Xbox360Wireless.getChatPadPress(CHATPAD_6, i))
+                        if (getChatPadPress(CHATPAD_6, i))
                             sensitivity = 350;
-                        if (Xbox360Wireless.getChatPadPress(CHATPAD_5, i))
+                        if (getChatPadPress(CHATPAD_5, i))
                             sensitivity = 400;
-                        if (Xbox360Wireless.getChatPadPress(CHATPAD_4, i))
+                        if (getChatPadPress(CHATPAD_4, i))
                             sensitivity = 650;
-                        if (Xbox360Wireless.getChatPadPress(CHATPAD_3, i))
+                        if (getChatPadPress(CHATPAD_3, i))
                             sensitivity = 800;
-                        if (Xbox360Wireless.getChatPadPress(CHATPAD_2, i))
+                        if (getChatPadPress(CHATPAD_2, i))
                             sensitivity = 1000;
-                        if (Xbox360Wireless.getChatPadPress(CHATPAD_1, i))
+                        if (getChatPadPress(CHATPAD_1, i))
                             sensitivity = 1200;
                         int32_t temp = 0;
                         EEPROM.get(0x00, temp);
@@ -555,20 +555,20 @@ int main(void)
                         }
                     }
 
-                    XboxOGSteelBattalion.sightChangeX = Xbox360Wireless.getAnalogHat(LeftHatX, i);
-                    XboxOGSteelBattalion.sightChangeY = -Xbox360Wireless.getAnalogHat(LeftHatY, i) - 1;
+                    XboxOGSteelBattalion.sightChangeX = getAnalogHat(LeftHatX, i);
+                    XboxOGSteelBattalion.sightChangeY = -getAnalogHat(LeftHatY, i) - 1;
 
-                    if (!Xbox360Wireless.getChatPadPress(CHATPAD_MESSENGER, i) && !Xbox360Wireless.getButtonPress(BACK, i))
+                    if (!getChatPadPress(CHATPAD_MESSENGER, i) && !getButtonPress(BACK, i))
                     {
                         //Moving aiming stick like a mouse cursor
 
-                        int32_t axisVal = Xbox360Wireless.getAnalogHat(RightHatX, i);
+                        int32_t axisVal = getAnalogHat(RightHatX, i);
                         if (axisVal > 7500 || axisVal < -7500)
                         {
                             virtualMouseX += axisVal / sensitivity;
                         }
 
-                        axisVal = Xbox360Wireless.getAnalogHat(RightHatY, i);
+                        axisVal = getAnalogHat(RightHatY, i);
                         if (axisVal > 7500 || axisVal < -7500)
                         {
                             virtualMouseY -= axisVal / sensitivity;
@@ -587,28 +587,43 @@ int main(void)
                         XboxOGSteelBattalion.aimingY = (uint16_t)virtualMouseY;
                     }
 
-                    XboxOGSteelBattalion.sightChangeX = Xbox360Wireless.getAnalogHat(LeftHatX, i);
-                    XboxOGSteelBattalion.sightChangeY = -Xbox360Wireless.getAnalogHat(LeftHatY, i) - 1;
+                    XboxOGSteelBattalion.sightChangeX = getAnalogHat(LeftHatX, i);
+                    XboxOGSteelBattalion.sightChangeY = -getAnalogHat(LeftHatY, i) - 1;
                 }
 
                 //Press the GREEN & ORANGE button on the chatpad to toggle between Duke and the Steel Battalion.
-                if (Xbox360Wireless.getChatPadPress(CHATPAD_GREEN, 0) && Xbox360Wireless.getChatPadClick(CHATPAD_ORANGE, 0))
+                if (getChatPadPress(CHATPAD_GREEN, 0) && getChatPadClick(CHATPAD_ORANGE, 0))
                 {
                     USB_Detach();
                     disconnectTimer = millis();
                     if (ConnectedXID != STEELBATTALION)
                     {
-                        Xbox360Wireless.chatPadQueueLed(CHATPAD_LED_GREEN_OFF, i);
-                        Xbox360Wireless.chatPadQueueLed(CHATPAD_LED_ORANGE_ON, i);
-                        Xbox360Wireless.chatPadQueueLed(CHATPAD_LED_GREEN_OFF, i);
-                        Xbox360Wireless.chatPadQueueLed(CHATPAD_LED_ORANGE_ON, i);
+                        chatPadQueueLed(CHATPAD_LED_GREEN_OFF, i);
+                        chatPadQueueLed(CHATPAD_LED_ORANGE_ON, i);
+                        chatPadQueueLed(CHATPAD_LED_GREEN_OFF, i);
+                        chatPadQueueLed(CHATPAD_LED_ORANGE_ON, i);
                     }
                     else
                     {
-                        Xbox360Wireless.chatPadQueueLed(CHATPAD_LED_GREEN_ON, i);
-                        Xbox360Wireless.chatPadQueueLed(CHATPAD_LED_ORANGE_OFF, i);
-                        Xbox360Wireless.chatPadQueueLed(CHATPAD_LED_GREEN_ON, i);
-                        Xbox360Wireless.chatPadQueueLed(CHATPAD_LED_ORANGE_OFF, i);
+                        chatPadQueueLed(CHATPAD_LED_GREEN_ON, i);
+                        chatPadQueueLed(CHATPAD_LED_ORANGE_OFF, i);
+                        chatPadQueueLed(CHATPAD_LED_GREEN_ON, i);
+                        chatPadQueueLed(CHATPAD_LED_ORANGE_OFF, i);
+                    }
+                }
+                //Press the GREEN & MESSENGER button on the chatpad to toggle controller Motor On/Off
+                if (getChatPadPress(CHATPAD_GREEN, 0) && getChatPadClick(CHATPAD_MESSENGER, 0))
+                {
+                    if (Xbox360Wired[i]->Xbox360Connected) {
+                        if (rumbleMotorOn) {
+                            Xbox360Wired[i]->setRumbleMotorOn(false);
+			    setRumbleOn(0, 0, i);
+			    chatPadQueueLed(CHATPAD_LED_MESSENGER_OFF, i);
+                        } else {
+                            Xbox360Wired[i]->setRumbleMotorOn(true);
+			    chatPadQueueLed(CHATPAD_LED_MESSENGER_ON, i);
+                        }
+                        rumbleMotorOn = !rumbleMotorOn;
                     }
                 }
                 if (disconnectTimer != 0 && millis() - disconnectTimer > 500)
@@ -622,10 +637,10 @@ int main(void)
                         XboxOGSteelBattalion.dButtons[0] = 0x0000;
                         XboxOGSteelBattalion.dButtons[1] = 0x0000;
                         XboxOGSteelBattalion.dButtons[2] = 0x0000;
-                        Xbox360Wireless.chatPadQueueLed(CHATPAD_LED_GREEN_OFF, i);
-                        Xbox360Wireless.chatPadQueueLed(CHATPAD_LED_ORANGE_ON, i);
-                        Xbox360Wireless.chatPadQueueLed(CHATPAD_LED_GREEN_OFF, i);
-                        Xbox360Wireless.chatPadQueueLed(CHATPAD_LED_ORANGE_ON, i);
+                        chatPadQueueLed(CHATPAD_LED_GREEN_OFF, i);
+                        chatPadQueueLed(CHATPAD_LED_ORANGE_ON, i);
+                        chatPadQueueLed(CHATPAD_LED_GREEN_OFF, i);
+                        chatPadQueueLed(CHATPAD_LED_ORANGE_ON, i);
                     }
                     else
                     {
@@ -634,10 +649,10 @@ int main(void)
                         XboxOGDuke[0].right_actuator = 0;
                         XboxOGDuke[0].rumbleUpdate = 1;
                         XboxOGDuke[0].dButtons = 0x0000;
-                        Xbox360Wireless.chatPadQueueLed(CHATPAD_LED_GREEN_ON, i);
-                        Xbox360Wireless.chatPadQueueLed(CHATPAD_LED_ORANGE_OFF, i);
-                        Xbox360Wireless.chatPadQueueLed(CHATPAD_LED_GREEN_ON, i);
-                        Xbox360Wireless.chatPadQueueLed(CHATPAD_LED_ORANGE_OFF, i);
+                        chatPadQueueLed(CHATPAD_LED_GREEN_ON, i);
+                        chatPadQueueLed(CHATPAD_LED_ORANGE_OFF, i);
+                        chatPadQueueLed(CHATPAD_LED_GREEN_ON, i);
+                        chatPadQueueLed(CHATPAD_LED_ORANGE_OFF, i);
                     }
                     disconnectTimer = 0;
                 }
@@ -695,6 +710,7 @@ int main(void)
                 //Send controller state to slave devices, and retrieve actuator/rumble values from slave devices.
                 //Applicable to player 2, 3 and 4 only. i.e when i>0.
                 static uint32_t rumblei2cTimer[MAX_CONTROLLERS] = {0}; //Timer to monitor how often rumbles are requested.
+#ifndef DISABLE_I2C
                 if (i > 0)
                 {
                     Wire.beginTransmission(i);
@@ -726,6 +742,7 @@ int main(void)
                         rumblei2cTimer[i] = millis();
                     }
                 }
+#endif //DISABLE_I2C
 
                 /*Check/send the Player 1 HID report every loop to minimise lag even more on the master*/
                 sendControllerHIDReport();
@@ -734,6 +751,7 @@ int main(void)
             {
                 //If the respective controller isn't synced, we instead send a disablePacket over the i2c bus
                 //so that the slave device knows to disable its USB. I've arbitrarily made this 0xF0.
+#ifndef DISABLE_I2C
                 if (i > 0)
                 {
                     static uint8_t disablePacket[1] = {0xF0};
@@ -741,6 +759,7 @@ int main(void)
                     Wire.write((char *)disablePacket, 1);
                     Wire.endTransmission(true);
                 }
+#endif //DISABLE_I2C
             }
         } //End master for loop
 
@@ -851,6 +870,18 @@ uint8_t getButtonPress(ButtonEnum b, uint8_t controller)
     return 0;
 }
 
+uint8_t getButtonClick(ButtonEnum b, uint8_t controller)
+{
+    if (Xbox360Wireless.Xbox360Connected[controller])
+        return Xbox360Wireless.getButtonClick(b, controller);
+
+#ifdef SUPPORTWIREDXBOX360
+    if (Xbox360Wired[controller]->Xbox360Connected)
+        return Xbox360Wired[controller]->getButtonClick(b);
+#endif
+    return 0;
+}
+
 //Parse analog stick requests for each type of controller.
 int16_t getAnalogHat(AnalogHatEnum a, uint8_t controller)
 {
@@ -875,6 +906,42 @@ int16_t getAnalogHat(AnalogHatEnum a, uint8_t controller)
 #endif
 
     return 0;
+}
+
+uint8_t getChatPadPress(ChatPadButton b, uint8_t controller)
+{
+    if (Xbox360Wireless.Xbox360Connected[controller])
+        return Xbox360Wireless.getChatPadPress(b, controller);
+
+#ifdef SUPPORTWIREDXBOX360
+    if (Xbox360Wired[controller]->Xbox360Connected)
+        return Xbox360Wired[controller]->getChatPadPress(b);
+#endif
+    return 0;
+}
+
+uint8_t getChatPadClick(ChatPadButton b, uint8_t controller)
+{
+    if (Xbox360Wireless.Xbox360Connected[controller])
+        return Xbox360Wireless.getChatPadClick(b, controller);
+
+#ifdef SUPPORTWIREDXBOX360
+    if (Xbox360Wired[controller]->Xbox360Connected)
+        return Xbox360Wired[controller]->getChatPadClick(b);
+#endif
+    return 0;
+}
+
+void chatPadQueueLed(uint8_t led, uint8_t controller)
+{
+    if (Xbox360Wireless.Xbox360Connected[controller])
+        return Xbox360Wireless.chatPadQueueLed(led, controller);
+
+#ifdef SUPPORTWIREDXBOX360
+    if (Xbox360Wired[controller]->Xbox360Connected)
+        return Xbox360Wired[controller]->chatPadQueueLed(led);
+#endif
+    return;
 }
 
 //Parse rumble activation requests for each type of controller.

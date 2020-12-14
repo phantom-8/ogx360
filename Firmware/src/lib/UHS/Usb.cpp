@@ -151,6 +151,9 @@ uint8_t USB::ctrlReq(uint8_t addr, uint8_t ep, uint8_t bmReqType, uint8_t bReque
 
         rcode = dispatchPkt(tokSETUP, ep, nak_limit); //dispatch packet
 
+	// The delay below is important.  Without it, Xbox 360 Wired Controller ChatPad initialization handshake will fail
+	delay(1);
+
         if(rcode) //return HRSLT if not zero
                 return ( rcode);
 

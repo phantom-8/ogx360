@@ -24,14 +24,7 @@ XBOXUSB::XBOXUSB(USB *p) : pUsb(p),     // pointer to USB class instance - manda
                            bAddress(0), // device address - mandatory
                            bPollEnable(false)
 { // don't start polling before dongle is connected
-    for (uint8_t i = 0; i < 3; i++)
-    {
-        epInfo[i].epAddr = 0;
-        epInfo[i].maxPktSize = (i) ? 0 : 8;
-        epInfo[i].bmSndToggle = 0;
-        epInfo[i].bmRcvToggle = 0;
-        epInfo[i].bmNakPower = (i) ? USB_NAK_NOWAIT : USB_NAK_MAX_POWER;
-    }
+    x360InitEpInfo(epInfo, XBOXUSB_MAX_ENDPOINTS);
 
     if (pUsb)                            // register in USB subsystem
         pUsb->RegisterDeviceClass(this); //set devConfig[] entry
@@ -155,20 +148,13 @@ uint8_t XBOXUSB::Init(uint8_t parent, uint8_t port, bool lowspeed)
     configuration values for device, interface, endpoints and HID for the XBOX360 Controllers */
 
     /* Initialize data structures for endpoints of device */
-    epInfo[XBOX_INPUT_PIPE].epAddr = 0x01; // XBOX 360 report endpoint
-    epInfo[XBOX_INPUT_PIPE].epAttribs = USB_TRANSFER_TYPE_INTERRUPT;
-    epInfo[XBOX_INPUT_PIPE].bmNakPower = USB_NAK_NOWAIT; // Only poll once for interrupt endpoints
-    epInfo[XBOX_INPUT_PIPE].maxPktSize = EP_MAXPKTSIZE;
-    epInfo[XBOX_INPUT_PIPE].bmSndToggle = 0;
-    epInfo[XBOX_INPUT_PIPE].bmRcvToggle = 0;
-    epInfo[XBOX_OUTPUT_PIPE].epAddr = (v114) ? 0x01 : 0x02; // XBOX 360 output endpoint
-    epInfo[XBOX_OUTPUT_PIPE].epAttribs = USB_TRANSFER_TYPE_INTERRUPT;
-    epInfo[XBOX_OUTPUT_PIPE].bmNakPower = USB_NAK_NOWAIT; // Only poll once for interrupt endpoints
-    epInfo[XBOX_OUTPUT_PIPE].maxPktSize = EP_MAXPKTSIZE;
-    epInfo[XBOX_OUTPUT_PIPE].bmSndToggle = 0;
-    epInfo[XBOX_OUTPUT_PIPE].bmRcvToggle = 0;
+    x360FillEpInfo(&epInfo[XBOX_INPUT_PIPE], 0x01); // XBOX 360 report endpoint
+    // Controller Output epAddr differs for 2 different hardware versions, v1.10: 0x02, v1.14: 0x01
+    x360FillEpInfo(&epInfo[XBOX_OUTPUT_PIPE], (v114) ? 0x01 : 0x02); // XBOX 360 output endpoint
+    // ChatPad Input epAddr differs for 2 different hardware versions, v1.10: 0x06, v1.14: 0x04
+    x360FillEpInfo(&epInfo[XBOX_INPUT_PIPE_CHATPAD], (v114) ? 0x04 : 0x06); // XBOX 360 Chatpad report endpoint
 
-    rcode = pUsb->setEpInfoEntry(bAddress, 3, epInfo);
+    rcode = pUsb->setEpInfoEntry(bAddress, XBOXUSB_MAX_ENDPOINTS, epInfo);
     if (rcode)
         goto FailSetDevTblEntry;
 
@@ -232,14 +218,45 @@ uint8_t XBOXUSB::Release()
 
 uint8_t XBOXUSB::Poll()
 {
+    static uint32_t checkStatusTimer = 0;
+    static uint32_t chatPadLedTimer = 0;
+    static bool keepAliveToggle = false;
+    uint16_t bufferSize;
+
     if (!bPollEnable)
         return 0;
-    uint16_t BUFFER_SIZE = EP_MAXPKTSIZE;
-    pUsb->inTransfer(bAddress, epInfo[XBOX_INPUT_PIPE].epAddr, &BUFFER_SIZE, readBuf); // input on endpoint 1
-    readReport();
+
+    bufferSize = EP_MAXPKTSIZE;
+    pUsb->inTransfer(bAddress, epInfo[XBOX_INPUT_PIPE].epAddr, &bufferSize, readBuf); // input on endpoint 1
+    if (bufferSize > 0) {
+        readReport();
 #ifdef PRINTREPORT
-    printReport(); // Uncomment "#define PRINTREPORT" to print the report send by the Xbox 360 Controller
+        printReport(epInfo[ XBOX_INPUT_PIPE ].epAddr, bufferSize); // Uncomment "#define PRINTREPORT" to print the report send by the Xbox 360 Controller
 #endif
+    }
+
+    bufferSize = EP_MAXPKTSIZE;
+    pUsb->inTransfer(bAddress, epInfo[XBOX_INPUT_PIPE_CHATPAD].epAddr, &bufferSize, readBuf); // input on chatpad endpoint
+    if (bufferSize > 0) {
+        readChatPadReport();
+#ifdef PRINTREPORT
+        printReport(epInfo[XBOX_INPUT_PIPE_CHATPAD].epAddr, bufferSize); // Uncomment "#define PRINTREPORT" to print the report send by the Xbox 360 Controller
+#endif
+    }
+
+    if (millis() - chatPadLedTimer > 250) {
+        chatPadProcessLed();
+        chatPadLedTimer = millis();
+    } else if (millis() - checkStatusTimer > 1000) {
+        // Send keep alive packet every second
+        if (keepAliveToggle)
+            chatPadKeepAlive1();
+        else
+            chatPadKeepAlive2();
+        keepAliveToggle = !keepAliveToggle;
+        checkStatusTimer=millis();
+    }
+
     return 0;
 }
 
@@ -252,76 +269,60 @@ void XBOXUSB::readReport()
         return;
     }
 
-    ButtonState = (uint32_t)(readBuf[5] | ((uint16_t)readBuf[4] << 8) | ((uint32_t)readBuf[3] << 16) | ((uint32_t)readBuf[2] << 24));
-
-    hatValue[LeftHatX] = (int16_t)(((uint16_t)readBuf[7] << 8) | readBuf[6]);
-    hatValue[LeftHatY] = (int16_t)(((uint16_t)readBuf[9] << 8) | readBuf[8]);
-    hatValue[RightHatX] = (int16_t)(((uint16_t)readBuf[11] << 8) | readBuf[10]);
-    hatValue[RightHatY] = (int16_t)(((uint16_t)readBuf[13] << 8) | readBuf[12]);
-
-    if (ButtonState != OldButtonState)
-    {
-        ButtonClickState = (ButtonState >> 16) & ((~OldButtonState) >> 16);
-        if (((uint8_t)OldButtonState) == 0 && ((uint8_t)ButtonState) != 0) // The L2 and R2 buttons are special as they are analog buttons
-            R2Clicked = true;
-        if ((uint8_t)(OldButtonState >> 8) == 0 && (uint8_t)(ButtonState >> 8) != 0)
-            L2Clicked = true;
-        OldButtonState = ButtonState;
-    }
+    x360ProcessButton(readBuf, 2, &button);
 }
 
-void XBOXUSB::printReport()
-{ //Uncomment "#define PRINTREPORT" to print the report send by the Xbox 360 Controller
-#ifdef PRINTREPORT
+void XBOXUSB::readChatPadReport() {
     if (readBuf == NULL)
         return;
-    for (uint8_t i = 0; i < XBOX_REPORT_BUFFER_SIZE; i++)
+    if (readBuf[0] == 0xF0 && readBuf[1] == 0x03) {
+        enableChatPad();
+    }
+    if (readBuf[0] == 0x00)
+        x360ProcessChatPad(readBuf, 0, &chatPad);
+}
+
+#ifdef PRINTREPORT
+void XBOXUSB::printReport(uint8_t endpoint, uint8_t nBytes)
+{ //Uncomment "#define PRINTREPORT" to print the report send by the Xbox 360 Controller
+    if (readBuf == NULL || nBytes == 0)
+        return;
+
+//if (readBuf[0] == 0xF0 & readBuf[1] == 0x04) return;
+    Notify(endpoint, 0x80);
+    Notify(PSTR(": "), 0x80);
+    for (uint8_t i = 0; i < nBytes; i++)
     {
         D_PrintHex<uint8_t>(readBuf[i], 0x80);
         Notify(PSTR(" "), 0x80);
     }
     Notify(PSTR("\r\n"), 0x80);
-#endif
 }
+#endif
 
 uint8_t XBOXUSB::getButtonPress(ButtonEnum b)
 {
-    if (b == L2) // These are analog buttons
-        return (uint8_t)(ButtonState >> 8);
-    else if (b == R2)
-        return (uint8_t)ButtonState;
-    return (bool)(ButtonState & ((uint32_t)pgm_read_word(&XBOX_BUTTONS[(uint8_t)b]) << 16));
+    return(x360GetButtonPress(b, &button));
 }
 
 bool XBOXUSB::getButtonClick(ButtonEnum b)
 {
-    if (b == L2)
-    {
-        if (L2Clicked)
-        {
-            L2Clicked = false;
-            return true;
-        }
-        return false;
-    }
-    else if (b == R2)
-    {
-        if (R2Clicked)
-        {
-            R2Clicked = false;
-            return true;
-        }
-        return false;
-    }
-    uint16_t button = pgm_read_word(&XBOX_BUTTONS[(uint8_t)b]);
-    bool click = (ButtonClickState & button);
-    ButtonClickState &= ~button; // clear "click" event
-    return click;
+    return(x360GetButtonClick(b, &button));
+}
+
+uint8_t XBOXUSB::getChatPadPress(ChatPadButton b)
+{
+    return(x360GetChatPadPress(b, &chatPad));
+}
+
+uint8_t XBOXUSB::getChatPadClick(ChatPadButton b)
+{
+    return(x360GetChatPadClick(b, &chatPad));
 }
 
 int16_t XBOXUSB::getAnalogHat(AnalogHatEnum a)
 {
-    return hatValue[a];
+    return(x360GetAnalogHat(a, &button));
 }
 
 /* Xbox Controller commands */
@@ -343,10 +344,45 @@ void XBOXUSB::XboxCommand(uint8_t *data, uint16_t nbytes)
     {
         uint16_t bufferSize = EP_MAXPKTSIZE;
         rcode = pUsb->inTransfer(bAddress, epInfo[XBOX_INPUT_PIPE].epAddr, &bufferSize, readBuf);
-        if (bufferSize > 0)
+        if (bufferSize > 0) {
+#ifdef PRINTREPORT
+    	    printReport(epInfo[ XBOX_INPUT_PIPE ].epAddr, bufferSize); // Uncomment "#define PRINTREPORT" to print the report send by the Xbox 360 Controller
+#endif
             readReport();
+	}
     }
     outPipeTimer = millis();
+}
+
+void XBOXUSB::sendCtrlEp(uint8_t val1, uint8_t val2, uint16_t val3, uint16_t val4)
+{
+    sendCtrlEp(val1, val2, val3, val4, 0, 0, NULL);
+}
+
+void XBOXUSB::sendCtrlEp(uint8_t val1, uint8_t val2, uint16_t val3, uint16_t val4, uint16_t total, uint16_t nbytes, uint8_t *data)
+{
+    pUsb->ctrlReq(bAddress, epInfo[XBOX_CONTROL_PIPE].epAddr, val1, val2, val3 & 0xFF, (val3 & 0xFF00) >> 8, val4, total, nbytes, data, NULL);
+    delay(1);
+}
+
+void XBOXUSB::chatPadKeepAlive1()
+{
+    sendChatPadCommand(0x1f);
+}
+
+void XBOXUSB::chatPadKeepAlive2()
+{
+    sendChatPadCommand(0x1e);
+}
+
+void XBOXUSB::enableChatPad()
+{
+    sendChatPadCommand(0x1b);
+}
+
+void XBOXUSB::sendChatPadCommand(uint8_t cmd)
+{
+    sendCtrlEp(0x41, 0x00, cmd, 0x02);
 }
 
 void XBOXUSB::setLedRaw(uint8_t value)
@@ -366,50 +402,87 @@ void XBOXUSB::setLedOn(LEDEnum led)
         setLedRaw(pgm_read_byte(&XBOX_LEDS[(uint8_t)led]) + 4);
 }
 
-void XBOXUSB::setLedBlink(LEDEnum led)
-{
-    setLedRaw(pgm_read_byte(&XBOX_LEDS[(uint8_t)led]));
-}
-
-void XBOXUSB::setLedMode(LEDModeEnum ledMode)
-{ // This function is used to do some special LED stuff the controller supports
-    setLedRaw((uint8_t)ledMode);
-}
-
 void XBOXUSB::setRumbleOn(uint8_t lValue, uint8_t rValue)
 {
-    writeBuf[0] = 0x00;
-    writeBuf[1] = 0x08;
-    writeBuf[2] = 0x00;
-    writeBuf[3] = lValue; // big weight
-    writeBuf[4] = rValue; // small weight
-    writeBuf[5] = 0x00;
-    writeBuf[6] = 0x00;
-    writeBuf[7] = 0x00;
+    if (rumbleMotorOn) {
+        memset(writeBuf, 0, 8);
+        writeBuf[1] = 0x08;
+        writeBuf[3] = lValue; // big weight
+        writeBuf[4] = rValue; // small weight
 
-    XboxCommand(writeBuf, 8);
+        XboxCommand(writeBuf, 8);
+    }
+}
+
+void XBOXUSB::setRumbleMotorOn(bool motorOn)
+{
+    rumbleMotorOn = motorOn;
+}
+
+void XBOXUSB::chatPadQueueLed(uint8_t led)
+{
+    x360ChatPadQueueLed(led, &chatPad);
+}
+
+void XBOXUSB::chatPadProcessLed()
+{
+    if (chatPad.chatPadLedQueue[0] != 0xFF)
+    {
+        sendChatPadCommand(chatPad.chatPadLedQueue[0]);
+        x360ChatPadPopLedQueue(&chatPad);
+    }
 }
 
 void XBOXUSB::onInit()
 {
     uint8_t stringDescriptor[10];
+    uint8_t code[4];
+
     //8bit-do appears as a Wired Xbox 360 controller, but will quickly change to a switch controller if you do not request a string descriptor
     //Request string descriptors
-    pUsb->ctrlReq(bAddress, epInfo[XBOX_CONTROL_PIPE].epAddr, 0x80, 0x06, 0x02, 0x03, 0x0409, 0x0002, 2, stringDescriptor, NULL);
-    delay(1);
+    sendCtrlEp(0x80, 0x06, 0x0302, 0x0409, 0x02, 2, stringDescriptor);
     //Request string descriptors
-    pUsb->ctrlReq(bAddress, epInfo[XBOX_CONTROL_PIPE].epAddr, 0x80, 0x06, 0x02, 0x03, 0x0409, 0x0022, 10, stringDescriptor, NULL);
-    delay(1);
+    sendCtrlEp(0x80, 0x06, 0x0302, 0x0409, 0x22, 10, stringDescriptor);
 
 
-    uint8_t outBuf0[3] = {0x01, 0x03, 0x02};
-    uint8_t outBuf1[3] = {0x01, 0x03, 0x06};
-    uint8_t outBuf2[3] = {0x02, 0x08, 0x03}; //Not sure what this. Seen in windows driver
-    uint8_t outBuf3[3] = {0x00, 0x03, 0x00}; //Turn off rumble?
-    XboxCommand(outBuf0, 3);
-    XboxCommand(outBuf1, 3);
-    XboxCommand(outBuf2, 3);
-    XboxCommand(outBuf3, 3);
+    // Wired Chatpad initialzation Sequence
+    sendCtrlEp(0x40, 0xa9, 0xa30c, 0x4423);
+    sendCtrlEp(0x40, 0xa9, 0x2344, 0x7f03);
+    sendCtrlEp(0x40, 0xa9, 0x5839, 0x6832);
+    sendCtrlEp(0xc0, 0xa1, 0x0000, 0xe416, 2, 2, code);
+    code[0] = 0x09;
+    code[1] = 0x00;
+    sendCtrlEp(0x40, 0xa1, 0x0000, 0xe416, 2, 2, code);
+    sendCtrlEp(0xc0, 0xa1, 0x0000, 0xe416, 2, 2, code);
+
+    // Starting sending ChatPad keep alive packets
+    chatPadKeepAlive1();
+    enableChatPad();
+
+    // Rewrite to save flash memory
+    uint8_t outBuf[3];
+    outBuf[0] = 0x01;
+    outBuf[1] = 0x03;
+    outBuf[2] = 0x02;
+    XboxCommand(outBuf, 3);
+    outBuf[0] = 0x01;
+    outBuf[1] = 0x03;
+    outBuf[2] = 0x06;
+    XboxCommand(outBuf, 3);
+    outBuf[0] = 0x02;		//Not sure what this. Seen in windows driver
+    outBuf[1] = 0x08;
+    outBuf[2] = 0x03;
+    XboxCommand(outBuf, 3);
+    outBuf[0] = 0x00;		//Turn off rumble?
+    outBuf[1] = 0x03;
+    outBuf[2] = 0x00;
+    XboxCommand(outBuf, 3);
+
+    //Init all chatpad led FIFO queues 0xFF means empty spot.
+    chatPad.chatPadLedQueue[0] = 0xFF;
+    chatPad.chatPadLedQueue[1] = 0xFF;
+    chatPad.chatPadLedQueue[2] = 0xFF;
+    chatPad.chatPadLedQueue[3] = 0xFF;
 
     if (pFuncOnInit)
         pFuncOnInit(); // Call the user function
