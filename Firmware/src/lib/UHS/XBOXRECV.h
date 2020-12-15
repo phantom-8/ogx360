@@ -37,7 +37,8 @@
 
 #define XBOX_INPUT_PIPE_1_CHATPAD 9
 
-#define XBOX_MAX_ENDPOINTS 9
+//#define XBOX_MAX_ENDPOINTS 9
+#define XBOX_MAX_ENDPOINTS (MAX_CONTROLLERS*2+1)
 
 /**
  * This class implements support for a Xbox Wireless receiver.
@@ -233,14 +234,14 @@ public:
         uint8_t getChatPadPress(ChatPadButton b, uint8_t controller); //Ryzee
         uint8_t getChatPadClick(ChatPadButton b, uint8_t controller); //Ryzee
         void chatPadQueueLed(uint8_t led, uint8_t controller);        //Ryzee
-        uint8_t chatPadInitNeeded[4];
+        uint8_t chatPadInitNeeded[MAX_CONTROLLERS];
 
         /**@}*/
 
         /** True if a wireless receiver is connected. */
         bool XboxReceiverConnected;
         /** Variable used to indicate if the XBOX 360 controller is successfully connected. */
-        uint8_t Xbox360Connected[4];
+        uint8_t Xbox360Connected[MAX_CONTROLLERS];
 
 protected:
         /** Pointer to USB class instance. */
@@ -263,10 +264,10 @@ private:
 
         bool bPollEnable;
 
-	x360ButtonType button[4];
-	x360ChatPadType chatPad[4];
+	x360ButtonType button[MAX_CONTROLLERS];
+	x360ChatPadType chatPad[MAX_CONTROLLERS];
 
-	uint16_t controllerStatus[4];
+	uint16_t controllerStatus[MAX_CONTROLLERS];
 
         uint32_t checkStatusTimer; //Timing for checkStatus() signals
         uint32_t chatPadLedTimer;  //Timing for chat pad led updates

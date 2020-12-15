@@ -80,10 +80,26 @@ XBOXONE *XboxOneWired[4] = {&XboxOneWired1, &XboxOneWired2, &XboxOneWired3, &Xbo
 #endif
 #ifdef SUPPORTWIREDXBOX360
 XBOXUSB Xbox360Wired1(&UsbHost);
+#if MAX_CONTROLLERS >= 2
 XBOXUSB Xbox360Wired2(&UsbHost);
+#endif
+#if MAX_CONTROLLERS >= 3
 XBOXUSB Xbox360Wired3(&UsbHost);
+#endif
+#if MAX_CONTROLLERS >= 4
 XBOXUSB Xbox360Wired4(&UsbHost);
-XBOXUSB *Xbox360Wired[4] = {&Xbox360Wired1, &Xbox360Wired2, &Xbox360Wired3, &Xbox360Wired4};
+#endif
+XBOXUSB *Xbox360Wired[MAX_CONTROLLERS] = {&Xbox360Wired1,
+#if MAX_CONTROLLERS >= 2
+                                          &Xbox360Wired2,
+#endif
+#if MAX_CONTROLLERS >= 3
+                                          &Xbox360Wired3,
+#endif
+#if MAX_CONTROLLERS >= 4
+                                          &Xbox360Wired4
+#endif
+                                         };
 #endif
 #endif
 
@@ -157,7 +173,12 @@ int main(void)
     //01 = Player 2
     //10 = Player 3
     //11 = Player 4
-    playerID = digitalRead(PLAYER_ID1_PIN) << 1 | digitalRead(PLAYER_ID2_PIN);
+    //playerID = digitalRead(PLAYER_ID1_PIN) << 1 | digitalRead(PLAYER_ID2_PIN);
+#ifdef MASTER
+    playerID = 0;
+#else
+    playerID = 1;
+#endif
 
     //Init the XboxOG data arrays to zero.
     memset(&XboxOGDuke, 0x00, sizeof(USB_XboxGamepad_Data_t) * MAX_CONTROLLERS);

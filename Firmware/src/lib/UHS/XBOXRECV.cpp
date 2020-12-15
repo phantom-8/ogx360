@@ -172,12 +172,18 @@ uint8_t XBOXRECV::Init(uint8_t parent __attribute__((unused)), uint8_t port __at
     /* Initialize data structures for endpoints of device */
     x360FillEpInfo(&epInfo[XBOX_INPUT_PIPE_1], 0x01);  // XBOX 360 Controller 1 report endpoint - poll interval 1ms
     x360FillEpInfo(&epInfo[XBOX_OUTPUT_PIPE_1], 0x01); // XBOX 360 Controller 1 output endpoint - poll interval 8ms
+#if MAX_CONTROLLERS >= 2
     x360FillEpInfo(&epInfo[XBOX_INPUT_PIPE_2], 0x03);  // XBOX 360 Controller 2 report endpoint - poll interval 1ms
     x360FillEpInfo(&epInfo[XBOX_OUTPUT_PIPE_2], 0x03); // XBOX 360 Controller 2 output endpoint - poll interval 8ms
+#endif
+#if MAX_CONTROLLERS >= 3
     x360FillEpInfo(&epInfo[XBOX_INPUT_PIPE_3], 0x05);  // XBOX 360 Controller 3 report endpoint - poll interval 1ms
     x360FillEpInfo(&epInfo[XBOX_OUTPUT_PIPE_3], 0x05); // XBOX 360 Controller 3 output endpoint - poll interval 8ms
+#endif
+#if MAX_CONTROLLERS >= 4
     x360FillEpInfo(&epInfo[XBOX_INPUT_PIPE_4], 0x07);  // XBOX 360 Controller 4 report endpoint - poll interval 1ms
     x360FillEpInfo(&epInfo[XBOX_OUTPUT_PIPE_4], 0x07); // XBOX 360 Controller 4 output endpoint - poll interval 8ms
+#endif
 
     rcode = pUsb->setEpInfoEntry(bAddress, XBOX_MAX_ENDPOINTS, epInfo);
     if (rcode)
@@ -209,7 +215,7 @@ Fail:
 uint8_t XBOXRECV::Release()
 {
     XboxReceiverConnected = false;
-    for (uint8_t i = 0; i < 4; i++)
+    for (uint8_t i = 0; i < MAX_CONTROLLERS; i++)
         Xbox360Connected[i] = 0x00;
 
     pUsb->GetAddressPool().FreeAddress(bAddress);
@@ -223,12 +229,12 @@ uint8_t XBOXRECV::Poll()
     if (!bPollEnable)
         return 0;
 
-    static uint32_t checkStatusTimer[4] = {0};
-    static uint32_t chatPadLedTimer[4] = {0};
+    static uint32_t checkStatusTimer[MAX_CONTROLLERS] = {0};
+    static uint32_t chatPadLedTimer[MAX_CONTROLLERS] = {0};
     uint32_t timeout;
-    volatile static uint32_t idleTimer[4] = {0};
+    volatile static uint32_t idleTimer[MAX_CONTROLLERS] = {0};
 
-    for (uint8_t i = 0; i < 4; i++)
+    for (uint8_t i = 0; i < MAX_CONTROLLERS; i++)
     {
         uint8_t rcode = hrSUCCESS;
         uint8_t inputPipe;
@@ -447,7 +453,7 @@ uint8_t XBOXRECV::getBatteryLevel(uint8_t controller)
 
 void XBOXRECV::XboxCommand(uint8_t controller, uint8_t* data, uint16_t nbytes) {
     uint8_t outputPipe;
-    static uint32_t outputTimer[4] = {0};
+    static uint32_t outputTimer[MAX_CONTROLLERS] = {0};
     uint32_t timeout;
     switch(controller) {
         case 0: outputPipe = XBOX_OUTPUT_PIPE_1; break;
@@ -603,7 +609,7 @@ void XBOXRECV::onInit(uint8_t controller)
     setLedRaw(0x06 + controller, controller); //Set LED quadrant on (solid);
 
     //Init all chatpad led FIFO queues 0xFF means empty spot.
-    for (uint8_t i = 0; i < 4; i++)
+    for (uint8_t i = 0; i < MAX_CONTROLLERS; i++)
     {
         chatPad[i].chatPadLedQueue[0] = 0xFF;
         chatPad[i].chatPadLedQueue[1] = 0xFF;
