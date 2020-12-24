@@ -192,11 +192,13 @@ public:
      * @param rValue     Right motor (small weight) inside the controller.
      */
     void setRumbleOn(uint8_t lValue, uint8_t rValue);
+#ifdef XBOXUSB_RUMBLE_OPTION
     /**
      * Turn rumble motor on or off.
      * @param motorOn    true to enable motor rumble, false to turn off
      */
     void setRumbleMotorOn(bool motorOn);
+#endif
     /**
      * Set LED value. Without using the ::LEDEnum or ::LEDModeEnum.
      * @param value      See:
@@ -259,7 +261,9 @@ private:
     void (*pFuncOnInit)(void); // Pointer to function called in onInit()
 
     bool bPollEnable;
+#ifdef XBOXUSB_RUMBLE_OPTION
     bool rumbleMotorOn;
+#endif
 
     x360ButtonType button;
     x360ChatPadType chatPad;

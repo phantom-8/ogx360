@@ -70,7 +70,9 @@ void chatPadQueueLed(uint8_t led, uint8_t controller);
 void setRumbleOn(uint8_t lValue, uint8_t rValue, uint8_t controller);
 void setLedOn(LEDEnum led, uint8_t controller);
 bool controllerConnected(uint8_t controller);
+#ifdef XBOXUSB_RUMBLE_OPTION
 bool rumbleMotorOn = false;		// Allow disabling Xbox Wired Controller rumble to avoid insufficient power causing brownout
+#endif
 bool emulateController1 = false;	// Emulate controller 1 connected (for SB-LOC which requrires a controller to be plugged in)
 #ifdef SUPPORTWIREDXBOXONE
 XBOXONE XboxOneWired1(&UsbHost);
@@ -637,6 +639,7 @@ int main(void)
 		//XBOXRECV: Press the GREEN & MESSENGER button to enable/disable emulating dummy Controller1 (for SB-LOC)
                 if (getChatPadPress(CHATPAD_GREEN, 0) && getChatPadClick(CHATPAD_MESSENGER, 0))
                 {
+#ifdef XBOXUSB_RUMBLE_OPTION
                     if (Xbox360Wired[i]->Xbox360Connected) {
                         if (rumbleMotorOn) {
                             Xbox360Wired[i]->setRumbleMotorOn(false);
@@ -647,7 +650,9 @@ int main(void)
 			    chatPadQueueLed(CHATPAD_LED_MESSENGER_ON, i);
                         }
                         rumbleMotorOn = !rumbleMotorOn;
-                    } else if (!Xbox360Wireless.Xbox360Connected[1]) {
+                    } else 
+#endif
+                    if (!Xbox360Wireless.Xbox360Connected[1]) {
 			if (emulateController1) {
                             // Need repeating 4 times to bypass intermitten failure
 			    chatPadQueueLed(CHATPAD_LED_MESSENGER_OFF, i);

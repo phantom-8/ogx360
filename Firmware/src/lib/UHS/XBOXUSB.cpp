@@ -404,20 +404,26 @@ void XBOXUSB::setLedOn(LEDEnum led)
 
 void XBOXUSB::setRumbleOn(uint8_t lValue, uint8_t rValue)
 {
+#ifdef XBOXUSB_RUMBLE_OPTION
     if (rumbleMotorOn) {
+#endif
         memset(writeBuf, 0, 8);
         writeBuf[1] = 0x08;
         writeBuf[3] = lValue; // big weight
         writeBuf[4] = rValue; // small weight
 
         XboxCommand(writeBuf, 8);
+#ifdef XBOXUSB_RUMBLE_OPTION
     }
+#endif
 }
 
+#ifdef XBOXUSB_RUMBLE_OPTION
 void XBOXUSB::setRumbleMotorOn(bool motorOn)
 {
     rumbleMotorOn = motorOn;
 }
+#endif
 
 void XBOXUSB::chatPadQueueLed(uint8_t led)
 {
