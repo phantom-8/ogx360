@@ -333,7 +333,7 @@ int main(void)
                     if (getButtonPress(R3, i) || getButtonPress(B, i))
                         XboxOGSteelBattalion.dButtons[0] |= SBC_GAMEPAD_W0_RIGHTJOYLOCKON;
 
-                    if (getButtonPress(R1, i) || getButtonPress(A, i))
+                    if (getButtonPress(A, i))
                         XboxOGSteelBattalion.dButtons[0] |= SBC_GAMEPAD_W0_RIGHTJOYMAINWEAPON;
 
                     if (getButtonPress(XBOX, i) || getChatPadPress(CHATPAD_0, i))
@@ -343,24 +343,23 @@ int main(void)
                     //It will Extinguish, Reload (if empty), or Wash if required. It will rumble for Chaff but you need to press Y to chaff.
                     //This is determined by reading back the LED feedback from the console. The game normally
                     //makes these LEDs flash when action is required. I use this data to rumble the controller and determine what X should do.
+                    uint8_t SB_left_actuator = 0;
+                    uint8_t SB_right_actuator = 0;
                     if ((XboxOGSteelBattalionFeedback.Chaff_Extinguisher & 0xF0) != 0)
                     {
-                        XboxOGDuke[i].right_actuator = (XboxOGSteelBattalionFeedback.Chaff_Extinguisher << 0) & 0xF0; //Only use right motor for chaff
-                        XboxOGDuke[i].rumbleUpdate = 1;
+                        SB_right_actuator = (XboxOGSteelBattalionFeedback.Chaff_Extinguisher << 0) & 0xF0; //Only use right motor for chaff
                     }
                     if ((XboxOGSteelBattalionFeedback.Chaff_Extinguisher & 0x0F) != 0)
                     {
-                        XboxOGDuke[i].left_actuator = (XboxOGSteelBattalionFeedback.Chaff_Extinguisher << 4) & 0xF0;
-                        XboxOGDuke[i].right_actuator = XboxOGDuke[i].left_actuator;
-                        XboxOGDuke[i].rumbleUpdate = 1;
+                        SB_left_actuator = (XboxOGSteelBattalionFeedback.Chaff_Extinguisher << 4) & 0xF0;
+                        SB_right_actuator = SB_left_actuator;
                         if (getButtonPress(X, i))
                             XboxOGSteelBattalion.dButtons[1] |= SBC_GAMEPAD_W1_EXTINGUISHER;
                     }
                     if ((XboxOGSteelBattalionFeedback.Comm1_MagazineChange & 0x0F) != 0)
                     {
-                        XboxOGDuke[i].left_actuator = (XboxOGSteelBattalionFeedback.Comm1_MagazineChange << 4) & 0xF0;
-                        XboxOGDuke[i].right_actuator = XboxOGDuke[i].left_actuator;
-                        XboxOGDuke[i].rumbleUpdate = 1;
+                        SB_left_actuator = (XboxOGSteelBattalionFeedback.Comm1_MagazineChange << 4) & 0xF0;
+                        SB_right_actuator = SB_left_actuator;
                         if (getButtonPress(X, i))
                             XboxOGSteelBattalion.dButtons[1] |= SBC_GAMEPAD_W1_WEAPONCONMAGAZINE;
                     }
@@ -371,8 +370,14 @@ int main(void)
                     }
                     if ((XboxOGSteelBattalionFeedback.CockpitHatch_EmergencyEject & 0x0F) != 0)
                     {
-                        XboxOGDuke[i].left_actuator = (XboxOGSteelBattalionFeedback.CockpitHatch_EmergencyEject << 4) & 0xF0;
-                        XboxOGDuke[i].right_actuator = XboxOGDuke[i].left_actuator;
+                        SB_left_actuator = (XboxOGSteelBattalionFeedback.CockpitHatch_EmergencyEject << 4) & 0xF0;
+                        SB_right_actuator = SB_left_actuator;
+                    }
+                    //Only update rumble data if it's different.  This will take care of turning off rumble motor.
+                    if (SB_left_actuator != XboxOGDuke[i].left_actuator || SB_right_actuator != XboxOGDuke[i].right_actuator)
+                    {
+                        XboxOGDuke[i].left_actuator = SB_left_actuator;
+                        XboxOGDuke[i].right_actuator = SB_right_actuator;
                         XboxOGDuke[i].rumbleUpdate = 1;
                     }
 
@@ -521,7 +526,7 @@ int main(void)
                     //Apply Pedals
                     XboxOGSteelBattalion.leftPedal = (uint16_t)(getButtonPress(L2, i) << 8);  //0x00 to 0xFF00 SIDESTEP PEDAL
                     XboxOGSteelBattalion.rightPedal = (uint16_t)(getButtonPress(R2, i) << 8); //0x00 to 0xFF00 ACCEL PEDAL
-                    if (getChatPadPress(CHATPAD_BACK, i))
+                    if (getButtonPress(R1, i) || getChatPadPress(CHATPAD_BACK, i))
                     {
                         XboxOGSteelBattalion.middlePedal = 0xFF00; //Brake Pedal
                     }
@@ -616,7 +621,7 @@ int main(void)
                 }
 
                 //Press the GREEN & ORANGE button on the chatpad to toggle between Duke and the Steel Battalion.
-                if (getChatPadPress(CHATPAD_GREEN, 0) && getChatPadClick(CHATPAD_ORANGE, 0))
+                if (i == 0 && getChatPadPress(CHATPAD_GREEN, 0) && getChatPadClick(CHATPAD_ORANGE, 0))
                 {
                     USB_Detach();
                     disconnectTimer = millis();
@@ -637,10 +642,10 @@ int main(void)
                 }
                 //XBOXUSB: Press the GREEN & MESSENGER button on the chatpad to toggle controller Motor On/Off
 		//XBOXRECV: Press the GREEN & MESSENGER button to enable/disable emulating dummy Controller1 (for SB-LOC)
-                if (getChatPadPress(CHATPAD_GREEN, 0) && getChatPadClick(CHATPAD_MESSENGER, 0))
+                if (i == 0 && getChatPadPress(CHATPAD_GREEN, 0) && getChatPadClick(CHATPAD_MESSENGER, 0))
                 {
-#ifdef XBOXUSB_RUMBLE_OPTION
                     if (Xbox360Wired[i]->Xbox360Connected) {
+#ifdef XBOXUSB_RUMBLE_OPTION
                         if (rumbleMotorOn) {
                             Xbox360Wired[i]->setRumbleMotorOn(false);
 			    setRumbleOn(0, 0, i);
@@ -650,19 +655,11 @@ int main(void)
 			    chatPadQueueLed(CHATPAD_LED_MESSENGER_ON, i);
                         }
                         rumbleMotorOn = !rumbleMotorOn;
-                    } else 
 #endif
-                    if (!Xbox360Wireless.Xbox360Connected[1]) {
+                    } else if (!Xbox360Wireless.Xbox360Connected[1]) {
 			if (emulateController1) {
-                            // Need repeating 4 times to bypass intermitten failure
-			    chatPadQueueLed(CHATPAD_LED_MESSENGER_OFF, i);
-			    chatPadQueueLed(CHATPAD_LED_MESSENGER_OFF, i);
-			    chatPadQueueLed(CHATPAD_LED_MESSENGER_OFF, i);
 			    chatPadQueueLed(CHATPAD_LED_MESSENGER_OFF, i);
 			} else {
-			    chatPadQueueLed(CHATPAD_LED_MESSENGER_ON, i);
-			    chatPadQueueLed(CHATPAD_LED_MESSENGER_ON, i);
-			    chatPadQueueLed(CHATPAD_LED_MESSENGER_ON, i);
 			    chatPadQueueLed(CHATPAD_LED_MESSENGER_ON, i);
 			}
 			emulateController1 = !emulateController1;
