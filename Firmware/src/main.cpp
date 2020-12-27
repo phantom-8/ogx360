@@ -68,7 +68,7 @@ uint8_t getChatPadPress(ChatPadButton b, uint8_t controller);
 uint8_t getChatPadClick(ChatPadButton b, uint8_t controller);
 void chatPadQueueLed(uint8_t led, uint8_t controller);
 void setRumbleOn(uint8_t lValue, uint8_t rValue, uint8_t controller);
-void setLedOn(LEDEnum led, uint8_t controller);
+void setLedRaw(uint8_t val, uint8_t controller);
 bool controllerConnected(uint8_t controller);
 #ifdef XBOXUSB_RUMBLE_OPTION
 bool rumbleMotorOn = false;		// Allow disabling Xbox Wired Controller rumble to avoid insufficient power causing brownout
@@ -379,6 +379,10 @@ int main(void)
                         XboxOGDuke[i].left_actuator = SB_left_actuator;
                         XboxOGDuke[i].right_actuator = SB_right_actuator;
                         XboxOGDuke[i].rumbleUpdate = 1;
+                        if (SB_left_actuator == 0 && SB_right_actuator == 0)
+                            setLedRaw(0x06 + i, i);		// Restore to normal
+                        else
+                            setLedRaw(ROTATING, i);		// Rotate LED to attract attention
                     }
 
                     //Hold the messenger button for COMMS and Adjust TunerDial
@@ -692,6 +696,7 @@ int main(void)
                         chatPadQueueLed(CHATPAD_LED_ORANGE_OFF, i);
                         chatPadQueueLed(CHATPAD_LED_GREEN_ON, i);
                         chatPadQueueLed(CHATPAD_LED_ORANGE_OFF, i);
+                        setLedRaw(0x06 + i, i);		// Restore to normal
                     }
                     disconnectTimer = 0;
                 }
@@ -1004,21 +1009,15 @@ void setRumbleOn(uint8_t lValue, uint8_t rValue, uint8_t controller)
 #endif
 }
 
-//Parse LED activation requests for each type of controller.
-void setLedOn(LEDEnum led, uint8_t controller)
+void setLedRaw(uint8_t val, uint8_t controller)
 {
     if (Xbox360Wireless.Xbox360Connected[controller])
-        Xbox360Wireless.setLedOn(led, controller);
+        Xbox360Wireless.setLedRaw(val, controller);
 
 #ifdef SUPPORTWIREDXBOX360
     if (Xbox360Wired[controller]->Xbox360Connected)
-        Xbox360Wired[controller]->setLedOn(led);
-#endif
-
-#ifdef SUPPORTWIREDXBOXONE
-    if (XboxOneWired[controller]->XboxOneConnected)
     {
-        //no LEDs on Xbox One Controller. I think it is possible to adjust brightness but this is not implemented.
+        Xbox360Wired[controller]->setLedRaw(val); 
     }
 #endif
 }
