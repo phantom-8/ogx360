@@ -285,15 +285,9 @@ uint8_t XBOXRECV::Poll()
                         idleTimer[i] = millis();
                     }
                     break;
-                case 1:
-                    //setLedRaw(0x06 + i, i);	// No need to keep setting LED as the initial setting works fine
-                    break;
-                case 2:
-                    chatPadKeepAlive1(i);
-                    break;
-                case 3:
-                    chatPadKeepAlive2(i);
-                    break;
+                case 1: setLedRaw(0x06 + i, i); break;
+                case 2: chatPadKeepAlive1(i);   break;
+                case 3: chatPadKeepAlive2(i);   break;
             }
             state[i] = ((state[i] + 1) % 4);
             checkStatusTimer[i] = millis();
